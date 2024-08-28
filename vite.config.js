@@ -7,7 +7,11 @@ export default defineConfig({
   base: "/one18-inventory/",
   build: {
     rollupOptions: {
-      external: ["react"],
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom"],
+        },
+      },
     },
   },
   resolve: {

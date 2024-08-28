@@ -5,30 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>One18 Bakery Inventory Panel</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script type="text/javascript">
-      // Single Page Apps for GitHub Pages
-      // https://github.com/rafrex/spa-github-pages
-      (function (l) {
-        if (l.search) {
-          var q = {};
-          l.search
-            .slice(1)
-            .split("&")
-            .forEach(function (v) {
-              var a = v.split("=");
-              q[a[0]] = a.slice(1).join("=").replace(/~and~/g, "&");
-            });
-          if (q.p !== undefined) {
-            window.history.replaceState(null, null, l.pathname.slice(0, -1) + (q.p || "") + (q.q ? "?" + q.q : "") + l.hash);
-          }
-        }
-      })(window.location);
-    </script>
   </head>
   <body>
     <div id="root"></div>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client"
+        }
+      }
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
