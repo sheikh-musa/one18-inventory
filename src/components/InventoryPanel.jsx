@@ -95,6 +95,7 @@ const InventoryPanel = () => {
         throw new Error("API configuration is missing. Please check your environment variables.");
       }
 
+      // Update local state first
       const updatedProducts = products.map((product) =>
         product.id === productId
           ? {
@@ -109,8 +110,48 @@ const InventoryPanel = () => {
 
       const updatedProduct = updatedProducts.find((p) => p.id === productId);
       const isInStockAnywhere = Object.values(updatedProduct.locationAvailability).some((v) => v);
+      const newStockStatus = isInStockAnywhere ? "instock" : "outofstock";
 
-      if (isInStockAnywhere !== (updatedProduct.stock_status === "instock")) {
+      console.log(`Attempting to update product ${productId} to status: ${newStockStatus}`);
+
+      // Only update WooCommerce if the overall stock status is changing
+      if (newStockStatus !== updatedProduct.stock_status) {
+        // Get current product data
+        const getResponse = await fetch(
+          `${storeUrl}/wp-json/wc/v3/products/${productId}?consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`
+        );
+        const currentProductData = await getResponse.json();
+        console.log("Current product data:", currentProductData);
+
+        if (currentProductData.type === "variable") {
+          // For variable products, update each variation
+          const variationUpdatePromises = currentProductData.variations.map(async (variationId) => {
+            const variationResponse = await fetch(
+              `${storeUrl}/wp-json/wc/v3/products/${productId}/variations/${variationId}?consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`,
+              {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  stock_status: newStockStatus,
+                }),
+              }
+            );
+            return variationResponse.json();
+          });
+
+          const variationResults = await Promise.all(variationUpdatePromises);
+          console.log("Variation update results:", variationResults);
+
+          // Check if all variations were updated successfully
+          const allVariationsUpdated = variationResults.every((result) => result.stock_status === newStockStatus);
+          if (!allVariationsUpdated) {
+            throw new Error("Failed to update all variations to the desired stock status");
+          }
+        }
+
+        // Update the main product
         const response = await fetch(
           `${storeUrl}/wp-json/wc/v3/products/${productId}?consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`,
           {
@@ -119,34 +160,29 @@ const InventoryPanel = () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              stock_status: isInStockAnywhere ? "instock" : "outofstock",
+              stock_status: newStockStatus,
             }),
           }
         );
 
+        const responseData = await response.json();
+        console.log("Server response after update:", responseData);
+
         if (!response.ok) {
-          const errorBody = await response.text();
-          let errorMessage = `HTTP error! status: ${response.status}`;
-          try {
-            const errorJson = JSON.parse(errorBody);
-            if (errorJson.message) {
-              errorMessage += `, message: ${errorJson.message}`;
-            }
-          } catch (e) {
-            errorMessage += `, body: ${errorBody}`;
-          }
-          throw new Error(errorMessage);
+          throw new Error(`HTTP error! status: ${response.status}, message: ${responseData.message || "Unknown error"}`);
         }
 
-        const responseData = await response.json();
-        if (responseData.stock_status !== (isInStockAnywhere ? "instock" : "outofstock")) {
+        if (responseData.stock_status !== newStockStatus) {
           throw new Error(
-            `Failed to update product status on the server. Expected ${isInStockAnywhere ? "instock" : "outofstock"}, but got ${
+            `Failed to update product status on the server. Expected ${newStockStatus}, but got ${
               responseData.stock_status
-            }`
+            }. Full response: ${JSON.stringify(responseData)}`
           );
         }
-        updatedProduct.stock_status = isInStockAnywhere ? "instock" : "outofstock";
+
+        updatedProduct.stock_status = newStockStatus;
+      } else {
+        console.log(`No need to update WooCommerce. Product ${productId} remains ${updatedProduct.stock_status}`);
       }
 
       setProducts(updatedProducts);
@@ -155,6 +191,7 @@ const InventoryPanel = () => {
         description: `Updated ${location} to ${isAvailable ? "in stock" : "out of stock"}: ${updatedProduct.name}`,
       });
     } catch (error) {
+      console.error("Detailed error:", error);
       handleApiError(error, `update product ${productId} for location ${location}`);
     } finally {
       setUpdatingProducts((prev) => ({ ...prev, [`${productId}-${location}`]: false }));
