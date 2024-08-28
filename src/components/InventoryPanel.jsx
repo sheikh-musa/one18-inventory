@@ -23,6 +23,12 @@ const InventoryPanel = () => {
   const handleApiError = (error, action) => {
     console.error(`Error ${action}:`, error);
     let errorMessage = `Failed to ${action}: ${error.message}`;
+    if (error.response) {
+      errorMessage += ` (Status: ${error.response.status})`;
+      if (error.response.data && error.response.data.message) {
+        errorMessage += ` - ${error.response.data.message}`;
+      }
+    }
     if (error.response && error.response.status === 401) {
       errorMessage = "Unauthorized: Please check your API credentials.";
     } else if (!storeUrl || !consumerKey || !consumerSecret) {
@@ -117,16 +123,28 @@ const InventoryPanel = () => {
             }),
           }
         );
+
         if (!response.ok) {
-          if (response.status === 401) {
-            throw new Error("Unauthorized: Please check your API credentials.");
+          const errorBody = await response.text();
+          let errorMessage = `HTTP error! status: ${response.status}`;
+          try {
+            const errorJson = JSON.parse(errorBody);
+            if (errorJson.message) {
+              errorMessage += `, message: ${errorJson.message}`;
+            }
+          } catch (e) {
+            errorMessage += `, body: ${errorBody}`;
           }
-          const errorText = await response.text();
-          throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+          throw new Error(errorMessage);
         }
+
         const responseData = await response.json();
         if (responseData.stock_status !== (isInStockAnywhere ? "instock" : "outofstock")) {
-          throw new Error("Failed to update product status on the server.");
+          throw new Error(
+            `Failed to update product status on the server. Expected ${isInStockAnywhere ? "instock" : "outofstock"}, but got ${
+              responseData.stock_status
+            }`
+          );
         }
         updatedProduct.stock_status = isInStockAnywhere ? "instock" : "outofstock";
       }
@@ -137,7 +155,7 @@ const InventoryPanel = () => {
         description: `Updated ${location} to ${isAvailable ? "in stock" : "out of stock"}: ${updatedProduct.name}`,
       });
     } catch (error) {
-      handleApiError(error, "update product");
+      handleApiError(error, `update product ${productId} for location ${location}`);
     } finally {
       setUpdatingProducts((prev) => ({ ...prev, [`${productId}-${location}`]: false }));
     }
