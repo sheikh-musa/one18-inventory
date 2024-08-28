@@ -16,14 +16,34 @@ const InventoryPanel = () => {
   const [updatingProducts, setUpdatingProducts] = useState({});
   const { toast } = useToast();
 
-  const storeUrl = import.meta.env.VITE_STORE_URL;
-  const consumerKey = import.meta.env.VITE_CONSUMER_KEY;
-  const consumerSecret = import.meta.env.VITE_CONSUMER_SECRET;
+  const storeUrl = import.meta.env.VITE_STORE_URL || "";
+  const consumerKey = import.meta.env.VITE_CONSUMER_KEY || "";
+  const consumerSecret = import.meta.env.VITE_CONSUMER_SECRET || "";
+
+  const handleApiError = (error, action) => {
+    console.error(`Error ${action}:`, error);
+    let errorMessage = `Failed to ${action}: ${error.message}`;
+    if (error.response && error.response.status === 401) {
+      errorMessage = "Unauthorized: Please check your API credentials.";
+    } else if (!storeUrl || !consumerKey || !consumerSecret) {
+      errorMessage = "API configuration is missing. Please check your environment variables.";
+    }
+    setError(errorMessage);
+    toast({
+      title: "Error",
+      description: errorMessage,
+      variant: "destructive",
+    });
+  };
 
   const fetchData = async () => {
     setLoading(true);
     setError(null);
     try {
+      if (!storeUrl || !consumerKey || !consumerSecret) {
+        throw new Error("API configuration is missing. Please check your environment variables.");
+      }
+
       const [productsResponse, categoriesResponse] = await Promise.all([
         fetch(
           `${storeUrl}/wp-json/wc/v3/products?status=publish&per_page=100&consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`
@@ -32,13 +52,15 @@ const InventoryPanel = () => {
       ]);
 
       if (!productsResponse.ok || !categoriesResponse.ok) {
+        if (productsResponse.status === 401 || categoriesResponse.status === 401) {
+          throw new Error("Unauthorized: Please check your API credentials.");
+        }
         throw new Error(`HTTP error! status: ${productsResponse.status} ${categoriesResponse.status}`);
       }
 
       const productsData = await productsResponse.json();
       const categoriesData = await categoriesResponse.json();
 
-      // Initialize location availability based on overall stock status
       const productsWithLocations = productsData.map((product) => ({
         ...product,
         locationAvailability: LOCATIONS.reduce((acc, location) => {
@@ -50,13 +72,7 @@ const InventoryPanel = () => {
       setProducts(productsWithLocations);
       setCategories(categoriesData);
     } catch (error) {
-      console.error("Error fetching data:", error);
-      setError(`Error fetching data: ${error.message}`);
-      toast({
-        title: "Error",
-        description: `Failed to fetch data: ${error.message}`,
-        variant: "destructive",
-      });
+      handleApiError(error, "fetch data");
     } finally {
       setLoading(false);
     }
@@ -69,7 +85,10 @@ const InventoryPanel = () => {
   const updateProductAvailability = async (productId, location, isAvailable) => {
     setUpdatingProducts((prev) => ({ ...prev, [`${productId}-${location}`]: true }));
     try {
-      // Update local state first
+      if (!storeUrl || !consumerKey || !consumerSecret) {
+        throw new Error("API configuration is missing. Please check your environment variables.");
+      }
+
       const updatedProducts = products.map((product) =>
         product.id === productId
           ? {
@@ -85,7 +104,6 @@ const InventoryPanel = () => {
       const updatedProduct = updatedProducts.find((p) => p.id === productId);
       const isInStockAnywhere = Object.values(updatedProduct.locationAvailability).some((v) => v);
 
-      // Only update WooCommerce if the overall stock status is changing
       if (isInStockAnywhere !== (updatedProduct.stock_status === "instock")) {
         const response = await fetch(
           `${storeUrl}/wp-json/wc/v3/products/${productId}?consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`,
@@ -100,10 +118,16 @@ const InventoryPanel = () => {
           }
         );
         if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error("Unauthorized: Please check your API credentials.");
+          }
           const errorText = await response.text();
           throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
         }
-        // Update the stock_status in our local state
+        const responseData = await response.json();
+        if (responseData.stock_status !== (isInStockAnywhere ? "instock" : "outofstock")) {
+          throw new Error("Failed to update product status on the server.");
+        }
         updatedProduct.stock_status = isInStockAnywhere ? "instock" : "outofstock";
       }
 
@@ -113,13 +137,7 @@ const InventoryPanel = () => {
         description: `Updated ${location} to ${isAvailable ? "in stock" : "out of stock"}: ${updatedProduct.name}`,
       });
     } catch (error) {
-      console.error("Error updating product availability:", error);
-      setError(`Error updating product: ${error.message}`);
-      toast({
-        title: "Error",
-        description: `Failed to update product: ${error.message}`,
-        variant: "destructive",
-      });
+      handleApiError(error, "update product");
     } finally {
       setUpdatingProducts((prev) => ({ ...prev, [`${productId}-${location}`]: false }));
     }
@@ -141,7 +159,7 @@ const InventoryPanel = () => {
   return (
     <Card className="w-full max-w-4xl mx-auto">
       <CardHeader>
-        <CardTitle>Bakery Inventory Management</CardTitle>
+        <CardTitle className="text-xl sm:text-2xl">Bakery Inventory Management</CardTitle>
       </CardHeader>
       <CardContent>
         <Button onClick={fetchData} disabled={loading}>
@@ -152,36 +170,42 @@ const InventoryPanel = () => {
           <Accordion type="single" collapsible className="mt-4">
             {Object.entries(groupedProducts).map(([categoryId, category]) => (
               <AccordionItem value={categoryId} key={categoryId}>
-                <AccordionTrigger>{category.name}</AccordionTrigger>
+                <AccordionTrigger className="text-sm sm:text-base">{category.name}</AccordionTrigger>
                 <AccordionContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product Name</TableHead>
-                        <TableHead>Online Status</TableHead>
-                        {LOCATIONS.map((location) => (
-                          <TableHead key={location}>{location}</TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {category.products.map((product) => (
-                        <TableRow key={product.id}>
-                          <TableCell>{product.name}</TableCell>
-                          <TableCell>{product.stock_status === "instock" ? "In Stock" : "Out of Stock"}</TableCell>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs sm:text-sm">Product Name</TableHead>
+                          <TableHead className="text-xs sm:text-sm">Online Status</TableHead>
                           {LOCATIONS.map((location) => (
-                            <TableCell key={`${product.id}-${location}`}>
-                              <Switch
-                                checked={product.locationAvailability?.[location] ?? false}
-                                onCheckedChange={(checked) => updateProductAvailability(product.id, location, checked)}
-                                disabled={updatingProducts[`${product.id}-${location}`]}
-                              />
-                            </TableCell>
+                            <TableHead key={location} className="text-xs sm:text-sm">
+                              {location}
+                            </TableHead>
                           ))}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {category.products.map((product) => (
+                          <TableRow key={product.id}>
+                            <TableCell className="text-xs sm:text-sm">{product.name}</TableCell>
+                            <TableCell className="text-xs sm:text-sm">
+                              {product.stock_status === "instock" ? "In Stock" : "Out of Stock"}
+                            </TableCell>
+                            {LOCATIONS.map((location) => (
+                              <TableCell key={`${product.id}-${location}`}>
+                                <Switch
+                                  checked={product.locationAvailability[location]}
+                                  onCheckedChange={(checked) => updateProductAvailability(product.id, location, checked)}
+                                  disabled={updatingProducts[`${product.id}-${location}`]}
+                                />
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </AccordionContent>
               </AccordionItem>
             ))}

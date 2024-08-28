@@ -11,8 +11,8 @@ const Auth = ({ onLogin }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Replace with your actual authentication logic
     if (username === import.meta.env.VITE_AUTH_USERNAME && password === import.meta.env.VITE_AUTH_PASSWORD) {
+      localStorage.setItem("isAuthenticated", "true");
       onLogin();
     } else {
       toast({
